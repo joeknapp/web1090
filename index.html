@@ -1,0 +1,1252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1090ES Web Receiver</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --border: #dde1e7;
+  --text: #1a1d23;
+  --text-dim: #5b6270;
+  --accent: #0e7c86;
+  --accent-dim: #e3f1f2;
+  --ok: #157a34;
+  --ok-bg: #e6f4ea;
+  --warn: #b3540a;
+  --warn-bg: #fbeee0;
+  --err: #b3261e;
+  --err-bg: #fbe9e8;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+
+  /* Map markers sit on OpenStreetMap tiles, not on the app's own surface - these stay fixed
+     across light/dark rather than following the theme, chosen only for contrast against tile
+     colors (beige roads, green parkland, grey urban fill). */
+  --plane-accent: #e5484d;
+  --track-accent: #f2c94c;
+  /* The system emoji glyph varies in color by OS (blue-gray on Apple, gray/red on Android,
+     white/blue on Windows) - masking its shape and filling with --plane-accent gives one
+     guaranteed color everywhere instead of whatever the platform happens to render. */
+  --plane-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Ctext x='12' y='13' font-size='20' text-anchor='middle' dominant-baseline='central'%3E%26%239992;%26%2365039;%3C/text%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --surface: #1c1f25;
+    --border: #2e323a;
+    --text: #e7e9ec;
+    --text-dim: #9aa1ad;
+    --accent: #4fd0da;
+    --accent-dim: #1c3336;
+    --ok: #6fd88c;
+    --ok-bg: #16301f;
+    --warn: #e3a45c;
+    --warn-bg: #3a2814;
+    --err: #f0928c;
+    --err-bg: #3a1917;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  margin: 0;
+  padding: 28px 20px 40px;
+  display: flex;
+  justify-content: center;
+}
+.page {
+  width: 100%;
+  max-width: 1040px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+header .eyebrow {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 6px;
+}
+header h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  text-wrap: balance;
+}
+header .sub {
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0;
+  max-width: 70ch;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+button {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: var(--bg);
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: default; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+select {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  margin-left: auto;
+}
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.idle { background: var(--accent-dim); color: var(--accent); }
+.pill.ok { background: var(--ok-bg); color: var(--ok); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.err { background: var(--err-bg); color: var(--err); }
+.banner { font-size: 13px; padding: 10px 14px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }
+.stats { display: flex; gap: 24px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.stat .label { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); margin: 0 0 2px; }
+.stat .value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 500; }
+
+#map { height: 440px; border-radius: 10px; }
+.map-card { padding: 0; overflow: hidden; }
+
+.table-card { padding: 0; overflow: hidden; }
+.table-card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 9px 16px; text-align: left; white-space: nowrap; }
+th { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); }
+td.mono { font-family: var(--mono); }
+td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+tbody tr:not(:last-child) td { border-bottom: 1px solid var(--border); }
+.empty-row { padding: 20px; color: var(--text-dim); font-size: 13px; text-align: center; }
+
+details.log-card { padding: 0; overflow: hidden; }
+details.log-card summary { padding: 14px 20px; cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; display: flex; align-items: center; justify-content: space-between; }
+details.log-card summary::-webkit-details-marker { display: none; }
+details.log-card summary::after { content: "show ▾"; font-weight: 400; color: var(--text-dim); font-size: 12px; }
+details.log-card[open] summary::after { content: "hide ▴"; }
+details.log-card summary .autoscroll { font-weight: 400; font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.log-body-header { display: flex; justify-content: flex-end; padding: 0 20px 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+#log { height: 260px; overflow-y: auto; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.7; padding: 0 20px 16px; }
+.log-row { white-space: pre; }
+.log-row.frame { color: var(--text); }
+.log-row.malformed { color: var(--err); }
+.log-row.meta { color: var(--accent); }
+
+.note { font-size: 12.5px; color: var(--text-dim); line-height: 1.6; margin: 0; }
+
+.aircraft-glyph {
+  width: 24px;
+  height: 24px;
+  background-color: var(--plane-accent);
+  -webkit-mask-image: var(--plane-mask);
+  mask-image: var(--plane-mask);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  transform-origin: 50% 50%;
+  transition: transform 0.3s ease;
+  filter: drop-shadow(0 0 1px rgba(0,0,0,0.45));
+}
+.ac-popup { font-family: var(--sans); min-width: 160px; }
+.ac-popup-title { font-family: var(--mono); font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.ac-popup-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 2px 0; }
+.ac-popup-row span:first-child { color: var(--text-dim); }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--surface); color: var(--text); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <p class="eyebrow">1090ES Web Receiver</p>
+    <h1>Aircraft map</h1>
+    <p class="sub">Reads decoded 1090ES/ADS-B frames from an LR2021 EVK over Web Serial or WebUSB, decodes DF17 (identification, CPR position, velocity) entirely client-side, and plots live traffic - a dump1090-style receiver with no backend.</p>
+  </header>
+
+  <div id="support-banner" class="banner" hidden>
+    This browser exposes neither the Web Serial API (<code>navigator.serial</code>) nor WebUSB (<code>navigator.usb</code>). Use a recent Chrome, Edge, or Opera build on desktop or Android.
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <select id="mode-select" title="Native Web Serial doesn't reliably find every device on Android yet - the WebUSB polyfill claims the USB interface directly instead, sidestepping that.">
+        <option value="auto" selected>Connection: auto</option>
+        <option value="native">Connection: Web Serial (native)</option>
+        <option value="polyfill">Connection: WebUSB (polyfill)</option>
+      </select>
+      <select id="baud-select">
+        <option value="115200" selected>115200 baud</option>
+        <option value="230400">230400 baud</option>
+        <option value="9600">9600 baud</option>
+      </select>
+      <button id="connect-btn">Request a serial port</button>
+      <span id="status-pill" class="pill idle">idle</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><p class="label">Frames decoded</p><p class="value" id="stat-frames">0</p></div>
+      <div class="stat"><p class="label">Position reports</p><p class="value" id="stat-positions">0</p></div>
+      <div class="stat"><p class="label">Aircraft tracked</p><p class="value" id="stat-aircraft">0</p></div>
+      <div class="stat"><p class="label">Rejected frames</p><p class="value" id="stat-rejected">0</p></div>
+    </div>
+  </div>
+
+  <div class="card map-card">
+    <div id="map"></div>
+  </div>
+
+  <div class="card table-card">
+    <div class="table-card-header">Tracked aircraft</div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>ICAO</th><th>Callsign</th><th class="num">Altitude (ft)</th><th class="num">Speed</th>
+            <th class="num">Heading</th><th class="num">V/S</th><th class="num">Position</th><th class="num">Last seen</th>
+          </tr>
+        </thead>
+        <tbody id="aircraft-body"></tbody>
+      </table>
+      <div class="empty-row" id="aircraft-empty">No aircraft yet - connect to the EVK to start receiving.</div>
+    </div>
+  </div>
+
+  <details class="log-card card">
+    <summary>Raw frame feed <span class="autoscroll"><label onclick="event.stopPropagation()"><input type="checkbox" id="autoscroll" checked> autoscroll</label></span></summary>
+    <div id="log"></div>
+  </details>
+
+  <p class="note">Serving requirement: Web Serial needs a secure context, which a bare <code>file://</code> page does not satisfy. Run <code>python3 -m http.server</code> in this directory and open <code>http://localhost:8000/</code> rather than double-clicking this file.</p>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script type="module">
+/* global L */
+// web-serial-polyfill is a genuine ES module (unpkg serves it unmodified from npm), so it can be
+// imported directly - no bundler needed. It talks to the device over WebUSB instead of the
+// browser's native Serial implementation, claiming the USB interface itself rather than relying
+// on the OS/browser to have already recognized and exposed it as a serial port. That sidesteps
+// Android Chrome's native Web Serial, which as of Chrome's 2026 Q2 rollout still only recognizes
+// serial ports on a limited set of devices - exactly the gap this project ran into on Android 17.
+import { serial as polyfillSerial } from 'https://unpkg.com/web-serial-polyfill@1.0.15/dist/serial.js';
+
+// ============================================================================================
+// Mode S / ADS-B (DF17) field decode - the part of dump1090's mode_s.c that still applies once
+// demodulation and CRC checking already happened in the LR2021's hardware.
+//
+// Frame layout (14 bytes as delivered by the firmware, payload + reconstructed CRC):
+//   byte 0       : DF (top 5 bits) / CA (bottom 3 bits)
+//   bytes 1-3    : ICAO24 address
+//   bytes 4-10   : ME field (56 bits) - the actual ADS-B message
+//   bytes 11-13  : PI / CRC-24 remainder
+// ============================================================================================
+
+const CRC24_POLYNOMIAL = 0x00fff409; // same constant as app_rx_ook.c's mode_s_crc24()
+
+/**
+ * Compute the Mode S CRC-24 remainder over `data` (matches the firmware's mode_s_crc24()).
+ * For DF17/18, feeding the full frame including the trailing 3-byte PI field should yield 0.
+ */
+function crc24( data )
+{
+    let crc = 0;
+    for( let i = 0; i < data.length; i++ )
+    {
+        crc ^= data[i] << 16;
+        for( let bit = 0; bit < 8; bit++ )
+        {
+            crc = ( crc & 0x800000 ) !== 0 ? ( ( crc << 1 ) ^ CRC24_POLYNOMIAL ) & 0xffffff : ( crc << 1 ) & 0xffffff;
+        }
+    }
+    return crc >>> 0;
+}
+
+/** Read an unsigned, MSB-first bitfield out of a byte buffer. `start`/`len` are in bits. */
+function bits( buf, start, len )
+{
+    let value = 0;
+    for( let i = 0; i < len; i++ )
+    {
+        const bitPos = start + i;
+        const byte = buf[bitPos >> 3];
+        const bit = ( byte >> ( 7 - ( bitPos & 7 ) ) ) & 1;
+        value = ( value << 1 ) | bit;
+    }
+    return value >>> 0;
+}
+
+const CALLSIGN_CHARSET = ( () =>
+{
+    // ICAO Annex 10 restricted IA5 alphabet used by the identification message: 1-26 -> A-Z, 32 -> space,
+    // 48-57 -> '0'-'9' (which are already ASCII 48-57, so no translation needed there), everything else unused.
+    const table = new Array( 64 ).fill( '?' );
+    for( let i = 1; i <= 26; i++ )
+    {
+        table[i] = String.fromCharCode( 64 + i );
+    }
+    table[32] = ' ';
+    for( let i = 48; i <= 57; i++ )
+    {
+        table[i] = String.fromCharCode( i );
+    }
+    return table;
+} )();
+
+function decodeIdentification( me )
+{
+    let callsign = '';
+    for( let i = 0; i < 8; i++ )
+    {
+        callsign += CALLSIGN_CHARSET[bits( me, 8 + i * 6, 6 )];
+    }
+    return { category: bits( me, 5, 3 ), callsign: callsign.trim() };
+}
+
+/**
+ * Decode a 12-bit AC12 altitude field (TC 9-18's ALT field).
+ *
+ * Q=1 (bit 4 of the field set) is the modern, near-universal case: straight 25 ft steps from -1000 ft.
+ * Q=0 is legacy Gillham/gray-code Mode C encoding - rare on any current transponder - and is reported as
+ * unavailable rather than silently guessed at.
+ */
+function decodeAC12( ac12 )
+{
+    const qBit = ac12 & 0x10;
+    if( qBit === 0 )
+    {
+        return null; // Gillham-coded altitude - not decoded, see doc comment above
+    }
+    const n = ( ( ac12 & 0x0fe0 ) >> 1 ) | ( ac12 & 0x000f );
+    return n * 25 - 1000;
+}
+
+/** NL(lat): number of CPR longitude zones at a given latitude (ICAO Annex 10 CPR algorithm). */
+function cprNL( lat )
+{
+    if( lat === 0 )
+    {
+        return 59;
+    }
+    const absLat = Math.abs( lat );
+    if( absLat >= 87 )
+    {
+        return absLat > 87 ? 1 : 2;
+    }
+    const nz = 15;
+    const a = 1 - Math.cos( Math.PI / ( 2 * nz ) );
+    const b = Math.cos( ( Math.PI / 180 ) * absLat ) ** 2;
+    return Math.floor( ( 2 * Math.PI ) / Math.acos( 1 - a / b ) );
+}
+
+function decodePosition( me, typecode )
+{
+    return {
+        oddFlag: bits( me, 21, 1 ) === 1,
+        altitude: decodeAC12( bits( me, 8, 12 ) ),
+        altitudeIsGnss: typecode >= 20,
+        latCpr: bits( me, 22, 17 ) / 131072,
+        lonCpr: bits( me, 39, 17 ) / 131072,
+    };
+}
+
+/**
+ * Global CPR decode: combine one even-format and one odd-format airborne position report into an
+ * unambiguous lat/lon. `newer` says which of the two frames is the most recent (its format decides
+ * which of the two candidate latitudes, and which NL, the longitude solution uses).
+ *
+ * @returns {{lat:number, lon:number}|null} null if the pair straddles a latitude-zone boundary and
+ * can't be resolved from these two frames alone (the spec's own failure mode for global decode).
+ */
+function cprDecodeGlobal( evenFrame, oddFrame, newer )
+{
+    const dLatEven = 360 / 60;
+    const dLatOdd = 360 / 59;
+
+    const j = Math.floor( 59 * evenFrame.latCpr - 60 * oddFrame.latCpr + 0.5 );
+
+    let latEven = dLatEven * ( mod( j, 60 ) + evenFrame.latCpr );
+    let latOdd = dLatOdd * ( mod( j, 59 ) + oddFrame.latCpr );
+    if( latEven >= 270 ) latEven -= 360;
+    if( latOdd >= 270 ) latOdd -= 360;
+
+    if( cprNL( latEven ) !== cprNL( latOdd ) )
+    {
+        return null; // straddles a latitude zone boundary - wait for the next pair
+    }
+
+    const lat = newer === 'even' ? latEven : latOdd;
+    const nl = cprNL( lat );
+    const ni = Math.max( nl - ( newer === 'even' ? 0 : 1 ), 1 );
+    const dLon = 360 / ni;
+    const m = Math.floor( evenFrame.lonCpr * ( nl - 1 ) - oddFrame.lonCpr * nl + 0.5 );
+    let lon = dLon * ( mod( m, ni ) + ( newer === 'even' ? evenFrame.lonCpr : oddFrame.lonCpr ) );
+    if( lon > 180 )
+    {
+        lon -= 360;
+    }
+
+    return { lat, lon };
+}
+
+function mod( a, b )
+{
+    return ( ( a % b ) + b ) % b;
+}
+
+function decodeVelocity( me )
+{
+    const subtype = bits( me, 5, 3 );
+    const vertRateSign = bits( me, 36, 1 ) === 1 ? -1 : 1;
+    const vertRateRaw = bits( me, 37, 9 );
+    const verticalRate = vertRateRaw === 0 ? null : vertRateSign * ( vertRateRaw - 1 ) * 64;
+
+    if( subtype === 1 || subtype === 2 )
+    {
+        const ewSign = bits( me, 13, 1 ) === 1 ? -1 : 1;
+        const ewRaw = bits( me, 14, 10 );
+        const nsSign = bits( me, 24, 1 ) === 1 ? -1 : 1;
+        const nsRaw = bits( me, 25, 10 );
+        if( ewRaw === 0 || nsRaw === 0 )
+        {
+            return { source: 'ground_speed', speedKt: null, headingDeg: null, verticalRate };
+        }
+        const supersonicFactor = subtype === 2 ? 4 : 1; // subtype 2 carries the same fields at 4x scale
+        const vEw = ewSign * ( ewRaw - 1 ) * supersonicFactor;
+        const vNs = nsSign * ( nsRaw - 1 ) * supersonicFactor;
+        const speedKt = Math.sqrt( vEw * vEw + vNs * vNs );
+        let headingDeg = ( Math.atan2( vEw, vNs ) * 180 ) / Math.PI;
+        if( headingDeg < 0 )
+        {
+            headingDeg += 360;
+        }
+        return { source: 'ground_speed', speedKt, headingDeg, verticalRate };
+    }
+
+    if( subtype === 3 || subtype === 4 )
+    {
+        const headingValid = bits( me, 13, 1 ) === 1;
+        const headingDeg = headingValid ? ( bits( me, 14, 10 ) / 1024 ) * 360 : null;
+        const airspeedRaw = bits( me, 25, 10 );
+        const supersonicFactor = subtype === 4 ? 4 : 1;
+        const airspeedKt = airspeedRaw === 0 ? null : ( airspeedRaw - 1 ) * supersonicFactor;
+        return { source: 'air_speed', speedKt: airspeedKt, headingDeg, verticalRate };
+    }
+
+    return null;
+}
+
+/**
+ * Parse one 14-byte dump1090-format frame into its DF17 fields.
+ *
+ * @param {Uint8Array} bytes 14 bytes: DF/CA, 3-byte ICAO, 7-byte ME, 3-byte CRC/PI.
+ * @returns {object|null} null for anything that isn't a DF17/18 extended squitter with a valid CRC.
+ */
+function parseFrame( bytes )
+{
+    if( bytes.length !== 14 )
+    {
+        return null;
+    }
+
+    const df = bytes[0] >> 3;
+    if( df !== 17 && df !== 18 )
+    {
+        return null; // this receiver path only ever produces extended squitter - anything else is noise
+    }
+
+    if( crc24( bytes ) !== 0 )
+    {
+        return null;
+    }
+
+    const icao = [ bytes[1], bytes[2], bytes[3] ].map( ( b ) => b.toString( 16 ).padStart( 2, '0' ) ).join( '' ).toUpperCase();
+    const me = bytes.subarray( 4, 11 );
+    const typecode = me[0] >> 3;
+
+    const frame = { df, icao, typecode, raw: bytes };
+
+    if( typecode >= 1 && typecode <= 4 )
+    {
+        Object.assign( frame, { kind: 'identification', ...decodeIdentification( me ) } );
+    }
+    else if( ( typecode >= 9 && typecode <= 18 ) || ( typecode >= 20 && typecode <= 22 ) )
+    {
+        Object.assign( frame, { kind: 'airborne_position', ...decodePosition( me, typecode ) } );
+    }
+    else if( typecode === 19 )
+    {
+        const velocity = decodeVelocity( me );
+        if( velocity )
+        {
+            Object.assign( frame, { kind: 'velocity', ...velocity } );
+        }
+    }
+
+    return frame;
+}
+
+// ============================================================================================
+// ICAO24-keyed aircraft state, built up from the stream of decoded DF17 frames. Owns the
+// even/odd CPR pairing (global position decode needs one of each, no more than ~10s apart) and
+// track history; knows nothing about serial framing or rendering.
+// ============================================================================================
+
+const MAX_CPR_PAIR_AGE_MS = 10000; // ICAO Annex 10's own bound for a safe global CPR decode
+const MAX_TRACK_POINTS = 200;
+
+class AircraftTable extends EventTarget
+{
+    constructor()
+    {
+        super();
+        /** @type {Map<string, object>} */
+        this.aircraft = new Map();
+    }
+
+    _getOrCreate( icao )
+    {
+        let ac = this.aircraft.get( icao );
+        if( !ac )
+        {
+            ac = {
+                icao,
+                callsign: null,
+                category: null,
+                altitude: null,
+                altitudeIsGnss: false,
+                speedKt: null,
+                headingDeg: null,
+                verticalRate: null,
+                lat: null,
+                lon: null,
+                track: [],
+                lastSeen: 0,
+                lastPositionAt: 0,
+                messageCount: 0,
+                _evenPos: null,
+                _oddPos: null,
+            };
+            this.aircraft.set( icao, ac );
+        }
+        return ac;
+    }
+
+    /** Feed one parsed frame from parseFrame(). No-op for frame kinds this table doesn't track. */
+    handleFrame( frame )
+    {
+        const now = Date.now();
+        const ac = this._getOrCreate( frame.icao );
+        ac.lastSeen = now;
+        ac.messageCount++;
+
+        if( frame.kind === 'identification' )
+        {
+            ac.callsign = frame.callsign || ac.callsign;
+            ac.category = frame.category;
+        }
+        else if( frame.kind === 'velocity' )
+        {
+            ac.speedKt = frame.speedKt ?? ac.speedKt;
+            ac.headingDeg = frame.headingDeg ?? ac.headingDeg;
+            ac.verticalRate = frame.verticalRate ?? ac.verticalRate;
+        }
+        else if( frame.kind === 'airborne_position' )
+        {
+            if( frame.altitude !== null )
+            {
+                ac.altitude = frame.altitude;
+                ac.altitudeIsGnss = frame.altitudeIsGnss;
+            }
+
+            const slot = { latCpr: frame.latCpr, lonCpr: frame.lonCpr, t: now };
+            if( frame.oddFlag )
+            {
+                ac._oddPos = slot;
+            }
+            else
+            {
+                ac._evenPos = slot;
+            }
+            this._tryPositionDecode( ac );
+        }
+
+        this._emit( 'update', ac );
+    }
+
+    _tryPositionDecode( ac )
+    {
+        const even = ac._evenPos;
+        const odd = ac._oddPos;
+        if( !even || !odd || Math.abs( even.t - odd.t ) > MAX_CPR_PAIR_AGE_MS )
+        {
+            return;
+        }
+
+        const newer = even.t >= odd.t ? 'even' : 'odd';
+        const result = cprDecodeGlobal( even, odd, newer );
+        if( !result )
+        {
+            return; // straddled a latitude zone boundary - next pair will resolve it
+        }
+
+        ac.lat = result.lat;
+        ac.lon = result.lon;
+        ac.lastPositionAt = Math.max( even.t, odd.t );
+        ac.track.push( { lat: result.lat, lon: result.lon, t: ac.lastPositionAt } );
+        if( ac.track.length > MAX_TRACK_POINTS )
+        {
+            ac.track.shift();
+        }
+    }
+
+    /** Drop aircraft not heard from in `maxAgeMs` - call periodically (e.g. every few seconds). */
+    pruneStale( maxAgeMs )
+    {
+        const cutoff = Date.now() - maxAgeMs;
+        for( const [ icao, ac ] of this.aircraft )
+        {
+            if( ac.lastSeen < cutoff )
+            {
+                this.aircraft.delete( icao );
+                this._emit( 'remove', ac );
+            }
+        }
+    }
+
+    _emit( type, ac )
+    {
+        this.dispatchEvent( new CustomEvent( type, { detail: { ...ac } } ) );
+    }
+}
+
+// ============================================================================================
+// Leaflet rendering for the aircraft table - a marker + fading track polyline per ICAO24, kept
+// in sync with AircraftTable's 'update'/'remove' events. Knows nothing about serial or decode.
+// ============================================================================================
+
+class MapView
+{
+    constructor( containerId )
+    {
+        this.map = L.map( containerId, { worldCopyJump: true } ).setView( [ 20, 0 ], 3 );
+        L.tileLayer( 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19,
+        } ).addTo( this.map );
+
+        // Leaflet's SVG renderer sets `stroke` as a plain attribute, not a style property, so a CSS
+        // var() reference wouldn't resolve there - read the token once, as a concrete color.
+        this.trackColor = getComputedStyle( document.documentElement ).getPropertyValue( '--track-accent' ).trim() || '#f2c94c';
+
+        /** @type {Map<string, {marker: L.Marker, track: L.Polyline}>} */
+        this.entries = new Map();
+        this.hasAutoFramed = false;
+        this.userInteracted = false;
+        this.map.on( 'zoomstart dragstart', () =>
+        {
+            this.userInteracted = true;
+        } );
+    }
+
+    upsert( ac )
+    {
+        if( ac.lat == null || ac.lon == null )
+        {
+            return;
+        }
+
+        let entry = this.entries.get( ac.icao );
+        if( !entry )
+        {
+            const icon = L.divIcon( {
+                className: 'aircraft-icon',
+                html: '<div class="aircraft-glyph"></div>', // shape comes from the CSS mask, color from --plane-accent
+                iconSize: [ 24, 24 ],
+                iconAnchor: [ 12, 12 ],
+            } );
+            const marker = L.marker( [ ac.lat, ac.lon ], { icon } ).addTo( this.map );
+            const track = L.polyline( [], { color: this.trackColor, weight: 2, opacity: 0.55 } ).addTo( this.map );
+            entry = { marker, track };
+            this.entries.set( ac.icao, entry );
+        }
+
+        entry.marker.setLatLng( [ ac.lat, ac.lon ] );
+        entry.marker.bindPopup( popupHtml( ac ) );
+
+        const glyph = entry.marker.getElement()?.querySelector( '.aircraft-glyph' );
+        if( glyph )
+        {
+            // The ✈️ glyph itself faces ~45° off north (up-and-to-the-right) in every common emoji font
+            // (Apple, Noto, Segoe UI Emoji) - subtract that so a 0deg heading actually points north, and
+            // the nose tracks true heading rather than sitting 45deg off from the trailing track line.
+            const heading = ac.headingDeg != null ? ac.headingDeg : 0;
+            glyph.style.transform = `rotate(${ heading - 45 }deg)`;
+        }
+
+        entry.track.setLatLngs( ac.track.map( ( p ) => [ p.lat, p.lon ] ) );
+
+        if( !this.hasAutoFramed && !this.userInteracted )
+        {
+            this.map.setView( [ ac.lat, ac.lon ], 9 );
+            this.hasAutoFramed = true;
+        }
+    }
+
+    remove( icao )
+    {
+        const entry = this.entries.get( icao );
+        if( !entry )
+        {
+            return;
+        }
+        this.map.removeLayer( entry.marker );
+        this.map.removeLayer( entry.track );
+        this.entries.delete( icao );
+    }
+}
+
+function popupHtml( ac )
+{
+    const alt = ac.altitude != null ? `${ ac.altitude.toLocaleString() } ft${ ac.altitudeIsGnss ? ' (GNSS)' : '' }` : '—';
+    const speed = ac.speedKt != null ? `${ Math.round( ac.speedKt ) } kt` : '—';
+    const heading = ac.headingDeg != null ? `${ Math.round( ac.headingDeg ) }°` : '—';
+    const vrate = ac.verticalRate != null ? `${ ac.verticalRate > 0 ? '+' : '' }${ ac.verticalRate } ft/min` : '—';
+
+    const row = ( label, value ) => `<div class="ac-popup-row"><span>${ label }</span><span>${ value }</span></div>`;
+
+    return `<div class="ac-popup">
+        <div class="ac-popup-title">${ ac.callsign || ac.icao }</div>
+        ${ row( 'ICAO', ac.icao ) }
+        ${ row( 'Altitude', alt ) }
+        ${ row( 'Speed', speed ) }
+        ${ row( 'Heading', heading ) }
+        ${ row( 'V/S', vrate ) }
+    </div>`;
+}
+
+// ============================================================================================
+// Web Serial reader for the packet_rx_ook_raw firmware's OOK_OUTPUT_DUMP1090 line format.
+//
+// Each valid reception is emitted by the firmware as one line:
+//   *8D4840D6202CC371C32CE0576098;
+// i.e. '*', an even number of hex digits (payload + reconstructed 3-byte CRC), ';', then '\n'.
+// This owns turning that raw byte stream into an async sequence of decoded Uint8Array frames -
+// nothing here knows about Mode S / ADS-B field layout, only the wire framing.
+// ============================================================================================
+
+const DUMP1090_LINE_RE = /^\*([0-9A-Fa-f]+);$/;
+
+/** Convert a hex string (even length, no separators) into a Uint8Array. */
+function hexToBytes( hex )
+{
+    const bytes = new Uint8Array( hex.length / 2 );
+    for( let i = 0; i < bytes.length; i++ )
+    {
+        bytes[i] = parseInt( hex.substr( i * 2, 2 ), 16 );
+    }
+    return bytes;
+}
+
+class SerialFrameReader extends EventTarget
+{
+    constructor()
+    {
+        super();
+        this.port = null;
+        this.reader = null;
+        this.readableClosed = null;
+        this.keepReading = false;
+        this._usbDisconnectHandler = null;
+
+        // Diagnostics, surfaced in the UI so a bad wire format is visible immediately rather than silently dropped.
+        this.stats = { lines: 0, frames: 0, malformed: 0 };
+    }
+
+    get isOpen()
+    {
+        return this.port !== null && this.keepReading;
+    }
+
+    /**
+     * Prompt the user to pick a serial port (must be called from a user gesture) and open it.
+     *
+     * @param {number} baudRate
+     * @param {{requestPort: Function}} serialImpl `navigator.serial` or the WebUSB polyfill's `serial`
+     * @param {boolean} isPolyfill true when `serialImpl` is the WebUSB polyfill, not native Web Serial
+     */
+    async connect( baudRate, serialImpl, isPolyfill )
+    {
+        this.port = await serialImpl.requestPort();
+        await this.port.open( { baudRate } );
+
+        if( typeof this.port.addEventListener === 'function' )
+        {
+            // Native SerialPort is an EventTarget and fires its own 'disconnect'.
+            this.port.addEventListener( 'disconnect', () =>
+            {
+                this._emit( 'disconnect', {} );
+                this.disconnect();
+            } );
+        }
+        else if( isPolyfill && navigator.usb )
+        {
+            // The polyfill's SerialPort isn't an EventTarget - the underlying WebUSB device is what
+            // actually fires 'disconnect', on navigator.usb rather than on the port object itself.
+            this._usbDisconnectHandler = ( event ) =>
+            {
+                if( this.port && event.device === this.port.device_ )
+                {
+                    this._emit( 'disconnect', {} );
+                    this.disconnect();
+                }
+            };
+            navigator.usb.addEventListener( 'disconnect', this._usbDisconnectHandler );
+        }
+
+        this.keepReading = true;
+        this.readableClosed = this._readLoop();
+        this._emit( 'connect', { info: this.port.getInfo(), isPolyfill } );
+    }
+
+    /** Stop reading and release the port. Safe to call more than once. */
+    async disconnect()
+    {
+        this.keepReading = false;
+
+        if( this._usbDisconnectHandler && navigator.usb )
+        {
+            navigator.usb.removeEventListener( 'disconnect', this._usbDisconnectHandler );
+            this._usbDisconnectHandler = null;
+        }
+
+        if( this.reader )
+        {
+            try
+            {
+                await this.reader.cancel();
+            }
+            catch( err )
+            {
+                // Reader already gone (e.g. device unplugged) - nothing to clean up.
+            }
+        }
+
+        if( this.readableClosed )
+        {
+            try
+            {
+                await this.readableClosed;
+            }
+            catch( err )
+            {
+                // Loop unwound via the cancel() above - expected.
+            }
+        }
+
+        if( this.port )
+        {
+            try
+            {
+                await this.port.close();
+            }
+            catch( err )
+            {
+                // Port already closed by the OS (e.g. unplugged) - nothing to clean up.
+            }
+        }
+
+        this.port = null;
+        this.reader = null;
+    }
+
+    async _readLoop()
+    {
+        const textDecoder = new TextDecoderStream();
+        const readableStreamClosed = this.port.readable.pipeTo( textDecoder.writable );
+        const lineReader = textDecoder.readable
+            .pipeThrough( new TransformStream( new LineBreakTransformer() ) )
+            .getReader();
+        this.reader = lineReader;
+
+        try
+        {
+            while( this.keepReading )
+            {
+                const { value, done } = await lineReader.read();
+                if( done )
+                {
+                    break;
+                }
+                if( value !== undefined )
+                {
+                    this._handleLine( value );
+                }
+            }
+        }
+        finally
+        {
+            lineReader.releaseLock();
+            try
+            {
+                await readableStreamClosed;
+            }
+            catch( err )
+            {
+                // Expected when the loop exits via reader.cancel().
+            }
+        }
+    }
+
+    _handleLine( rawLine )
+    {
+        const line = rawLine.trim();
+        if( line.length === 0 )
+        {
+            return;
+        }
+
+        this.stats.lines++;
+
+        const match = DUMP1090_LINE_RE.exec( line );
+        if( !match || match[1].length % 2 !== 0 )
+        {
+            this.stats.malformed++;
+            this._emit( 'malformed', { line } );
+            return;
+        }
+
+        this.stats.frames++;
+        this._emit( 'frame', { bytes: hexToBytes( match[1] ), raw: line } );
+    }
+
+    _emit( type, detail )
+    {
+        this.dispatchEvent( new CustomEvent( type, { detail } ) );
+    }
+}
+
+/**
+ * TransformStream controller that buffers decoded text until a newline and emits complete lines.
+ * Mirrors the pattern from Chrome's own Web Serial samples - UART bytes arrive in arbitrary chunks,
+ * not one per line, so this is required rather than splitting each read() result on '\n' directly.
+ */
+class LineBreakTransformer
+{
+    constructor()
+    {
+        this.buffer = '';
+    }
+
+    transform( chunk, controller )
+    {
+        this.buffer += chunk;
+        const lines = this.buffer.split( '\n' );
+        this.buffer = lines.pop();
+        for( const line of lines )
+        {
+            controller.enqueue( line );
+        }
+    }
+
+    flush( controller )
+    {
+        if( this.buffer.length > 0 )
+        {
+            controller.enqueue( this.buffer );
+        }
+    }
+}
+
+// ============================================================================================
+// UI wiring: connects the serial reader -> decoder -> aircraft table -> map/table rendering.
+// ============================================================================================
+
+const STALE_AIRCRAFT_MS = 60000;
+const MAX_LOG_LINES = 300;
+
+const els = {
+    supportBanner: document.getElementById( 'support-banner' ),
+    connectBtn: document.getElementById( 'connect-btn' ),
+    modeSelect: document.getElementById( 'mode-select' ),
+    baudSelect: document.getElementById( 'baud-select' ),
+    statusPill: document.getElementById( 'status-pill' ),
+    statFrames: document.getElementById( 'stat-frames' ),
+    statPositions: document.getElementById( 'stat-positions' ),
+    statAircraft: document.getElementById( 'stat-aircraft' ),
+    statRejected: document.getElementById( 'stat-rejected' ),
+    aircraftBody: document.getElementById( 'aircraft-body' ),
+    aircraftEmpty: document.getElementById( 'aircraft-empty' ),
+    log: document.getElementById( 'log' ),
+    autoscroll: document.getElementById( 'autoscroll' ),
+};
+
+const reader = new SerialFrameReader();
+const aircraftTable = new AircraftTable();
+const map = new MapView( 'map' );
+
+let positionCount = 0;
+let rejectedCount = 0;
+
+function setStatus( state, label )
+{
+    els.statusPill.textContent = label;
+    els.statusPill.className = `pill ${ state }`;
+}
+
+function refreshStats()
+{
+    els.statFrames.textContent = reader.stats.frames;
+    els.statPositions.textContent = positionCount;
+    els.statAircraft.textContent = aircraftTable.aircraft.size;
+    els.statRejected.textContent = rejectedCount;
+}
+
+function appendLog( text, kind )
+{
+    const row = document.createElement( 'div' );
+    row.className = `log-row ${ kind }`;
+    row.textContent = text;
+    els.log.appendChild( row );
+    while( els.log.childElementCount > MAX_LOG_LINES )
+    {
+        els.log.removeChild( els.log.firstChild );
+    }
+    if( els.autoscroll.checked )
+    {
+        els.log.scrollTop = els.log.scrollHeight;
+    }
+}
+
+function fmt( value, unit, digits = 0 )
+{
+    return value == null ? '—' : `${ value.toFixed( digits ) }${ unit }`;
+}
+
+function renderAircraftRow( ac )
+{
+    let row = els.aircraftBody.querySelector( `tr[data-icao="${ ac.icao }"]` );
+    if( !row )
+    {
+        row = document.createElement( 'tr' );
+        row.dataset.icao = ac.icao;
+        els.aircraftBody.appendChild( row );
+    }
+
+    const ageSec = Math.max( 0, Math.round( ( Date.now() - ac.lastSeen ) / 1000 ) );
+    row.innerHTML = `
+        <td class="mono">${ ac.icao }</td>
+        <td>${ ac.callsign || '—' }</td>
+        <td class="num">${ ac.altitude != null ? ac.altitude.toLocaleString() + ( ac.altitudeIsGnss ? ' (G)' : '' ) : '—' }</td>
+        <td class="num">${ fmt( ac.speedKt, ' kt' ) }</td>
+        <td class="num">${ fmt( ac.headingDeg, '°' ) }</td>
+        <td class="num">${ fmt( ac.verticalRate, ' fpm' ) }</td>
+        <td class="num">${ ac.lat != null ? ac.lat.toFixed( 3 ) + ', ' + ac.lon.toFixed( 3 ) : '—' }</td>
+        <td class="num">${ ageSec }s</td>`;
+
+    els.aircraftEmpty.hidden = els.aircraftBody.childElementCount > 0;
+}
+
+function isAndroid()
+{
+    return /Android/i.test( navigator.userAgent );
+}
+
+/**
+ * Pick which Serial-shaped implementation to use for the next connect() call.
+ *
+ * "auto" defaults to the WebUSB polyfill on Android: as of Chrome's 2026 Q2 native-serial rollout,
+ * Android still only recognizes serial ports on a limited set of devices, which is exactly the gap
+ * this project hit (native Web Serial found nothing for the nRF54L15 DK's onboard J-Link VCP, while
+ * the WebUSB polyfill - which claims the USB interface directly instead of relying on the OS having
+ * already exposed it as a serial port - saw it immediately). Desktop keeps using native Web Serial,
+ * which has worked reliably throughout this project's development.
+ */
+function resolveSerialImpl( mode )
+{
+    if( mode === 'native' )
+    {
+        if( !( 'serial' in navigator ) )
+        {
+            throw new Error( 'navigator.serial is not available in this browser.' );
+        }
+        return { impl: navigator.serial, isPolyfill: false, label: 'Web Serial' };
+    }
+    if( mode === 'polyfill' )
+    {
+        if( !( 'usb' in navigator ) )
+        {
+            throw new Error( 'navigator.usb is not available - the WebUSB polyfill needs it.' );
+        }
+        return { impl: polyfillSerial, isPolyfill: true, label: 'WebUSB polyfill' };
+    }
+    if( isAndroid() && 'usb' in navigator )
+    {
+        return { impl: polyfillSerial, isPolyfill: true, label: 'WebUSB polyfill (auto)' };
+    }
+    if( 'serial' in navigator )
+    {
+        return { impl: navigator.serial, isPolyfill: false, label: 'Web Serial (auto)' };
+    }
+    if( 'usb' in navigator )
+    {
+        return { impl: polyfillSerial, isPolyfill: true, label: 'WebUSB polyfill (auto)' };
+    }
+    throw new Error( 'Neither navigator.serial nor navigator.usb is available in this browser.' );
+}
+
+if( !( 'serial' in navigator ) && !( 'usb' in navigator ) )
+{
+    els.supportBanner.hidden = false;
+    els.connectBtn.disabled = true;
+}
+
+aircraftTable.addEventListener( 'update', ( ev ) =>
+{
+    const ac = ev.detail;
+    map.upsert( ac );
+    renderAircraftRow( ac );
+    refreshStats();
+} );
+
+aircraftTable.addEventListener( 'remove', ( ev ) =>
+{
+    const ac = ev.detail;
+    map.remove( ac.icao );
+    els.aircraftBody.querySelector( `tr[data-icao="${ ac.icao }"]` )?.remove();
+    els.aircraftEmpty.hidden = els.aircraftBody.childElementCount > 0;
+    refreshStats();
+} );
+
+setInterval( () => aircraftTable.pruneStale( STALE_AIRCRAFT_MS ), 5000 );
+// Age-in-seconds column keeps ticking even between messages, without waiting on the next frame.
+setInterval( () =>
+{
+    for( const ac of aircraftTable.aircraft.values() )
+    {
+        const row = els.aircraftBody.querySelector( `tr[data-icao="${ ac.icao }"] td:last-child` );
+        if( row )
+        {
+            row.textContent = `${ Math.max( 0, Math.round( ( Date.now() - ac.lastSeen ) / 1000 ) ) }s`;
+        }
+    }
+}, 1000 );
+
+reader.addEventListener( 'connect', ( ev ) =>
+{
+    const info = ev.detail.info || {};
+    const idBits = [];
+    if( info.usbVendorId !== undefined )
+    {
+        idBits.push( `VID:PID ${ info.usbVendorId.toString( 16 ).padStart( 4, '0' ) }:${ ( info.usbProductId ?? 0 ).toString( 16 ).padStart( 4, '0' ) }` );
+    }
+    setStatus( 'ok', 'connected' );
+    els.connectBtn.textContent = 'Disconnect';
+    const via = ev.detail.isPolyfill ? 'WebUSB polyfill' : 'Web Serial';
+    appendLog( `-- connected via ${ via } ${ idBits.join( ' ' ) }`.trim(), 'meta' );
+} );
+
+reader.addEventListener( 'disconnect', () =>
+{
+    setStatus( 'warn', 'device unplugged' );
+    els.connectBtn.textContent = 'Request a serial port';
+    appendLog( '-- device disconnected', 'meta' );
+} );
+
+reader.addEventListener( 'frame', ( ev ) =>
+{
+    const hex = [ ...ev.detail.bytes ].map( ( b ) => b.toString( 16 ).padStart( 2, '0' ) ).join( ' ' ).toUpperCase();
+
+    const frame = parseFrame( ev.detail.bytes );
+    if( !frame )
+    {
+        rejectedCount++;
+        appendLog( `${ hex }   (rejected: not DF17/18 or CRC mismatch)`, 'malformed' );
+        refreshStats();
+        return;
+    }
+
+    if( frame.kind === 'airborne_position' )
+    {
+        positionCount++;
+    }
+    aircraftTable.handleFrame( frame );
+    const kindTag = frame.kind ? ` ${ frame.kind }${ frame.source ? '/' + frame.source : '' }` : '';
+    appendLog( `${ hex }   [${ frame.icao } tc${ frame.typecode }${ kindTag }]`, 'frame' );
+    refreshStats();
+} );
+
+reader.addEventListener( 'malformed', ( ev ) =>
+{
+    appendLog( `?? ${ ev.detail.line }`, 'malformed' );
+} );
+
+els.connectBtn.addEventListener( 'click', async () =>
+{
+    if( reader.isOpen )
+    {
+        await reader.disconnect();
+        setStatus( 'idle', 'disconnected' );
+        els.connectBtn.textContent = 'Request a serial port';
+        return;
+    }
+
+    try
+    {
+        setStatus( 'idle', 'requesting…' );
+        const { impl, isPolyfill } = resolveSerialImpl( els.modeSelect.value );
+        await reader.connect( Number( els.baudSelect.value ), impl, isPolyfill );
+    }
+    catch( err )
+    {
+        if( err && err.name === 'NotFoundError' )
+        {
+            setStatus( 'idle', 'no port selected' );
+        }
+        else
+        {
+            setStatus( 'err', err && err.name ? err.name : 'error' );
+            appendLog( `!! ${ err && err.message ? err.message : err }`, 'malformed' );
+        }
+    }
+} );
+</script>
+</body>
+</html>
